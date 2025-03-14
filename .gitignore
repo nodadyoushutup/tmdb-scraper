@@ -1,0 +1,6 @@
+*.log
+*.txt
+*.json
+venv/
+__pycache__/
+app/config.py
