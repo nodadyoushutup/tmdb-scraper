@@ -1,6 +1,6 @@
 *.log
 *.txt
 *.json
+*.env
 venv/
 __pycache__/
-app/config.py
