@@ -14,3 +14,4 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     API_TOKEN = os.environ.get("API_TOKEN")
+    SQLALCHEMY_ECHO = True

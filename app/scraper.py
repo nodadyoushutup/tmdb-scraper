@@ -9,6 +9,21 @@ from app.invalid import Invalid  # Existing invalid model
 from app import db, create_app
 
 
+class ScraperRecord(BaseModel):
+    __tablename__ = "scraper"
+
+    start_id = db.Column(db.BigInteger, nullable=True)
+    end_id = db.Column(db.BigInteger, nullable=True)
+    max_requests_per_second = db.Column(db.Integer, nullable=True)
+    scrape_type = db.Column(db.String(50), nullable=True)
+    consecutive_invalid_threshold = db.Column(db.Integer, nullable=True)
+    total_requests = db.Column(db.Integer, default=0)
+    total_request_time = db.Column(db.Float, default=0.0)
+    items_scraped = db.Column(db.Integer, default=0)
+    consecutive_invalid = db.Column(db.Integer, default=0)
+    cancelled = db.Column(db.Boolean, default=False)
+
+
 class Scraper:
     def __init__(self, start_id=1, end_id=1000000000000, max_requests_per_second=30,
                  scrape_type="missing", consecutive_invalid_threshold=5000):
@@ -39,7 +54,7 @@ class Scraper:
         # Track only the consecutive invalid IDs (current block).
         self.consecutive_invalid_ids = set()
 
-        # Create a scraper record in the DB.
+        # Create a scraper record in the DB (we have only _id).
         self.record = ScraperRecord.create({
             "start_id": self.start_id,
             "end_id": self.end_id,
@@ -52,17 +67,17 @@ class Scraper:
             "consecutive_invalid": 0,
             "cancelled": False
         })
-        logger.info(f"Created scraper record with ID {self.record.id}")
+        logger.info(f"Created scraper record with _id {self.record._id}")
 
     def cancel(self):
         self.cancelled = True
-        # Also update the record.
+        # Also update the record in the DB
         self.record.update({"cancelled": True})
         logger.info("Scraper record marked as cancelled.")
 
     def check_cancelled(self):
-        # Re-query the record to see if it has been marked cancelled externally.
-        updated_record = ScraperRecord.get("id", self.record.id)
+        # Re-query the record by _id to see if it has been cancelled externally.
+        updated_record = ScraperRecord.get("_id", self.record._id)
         return updated_record.cancelled
 
     def get_invalid_ids(self):
@@ -76,9 +91,9 @@ class Scraper:
         try:
             removed_count = 0
             for movie_id in self.consecutive_invalid_ids:
-                record = Invalid.query.filter_by(movie_id=movie_id).first()
-                if record:
-                    db.session.delete(record)
+                rec = Invalid.query.filter_by(movie_id=movie_id).first()
+                if rec:
+                    db.session.delete(rec)
                     removed_count += 1
             db.session.commit()
             logger.info(
@@ -92,10 +107,9 @@ class Scraper:
         with app.app_context():
             start_time = time.time()
             refresh_interval = 100  # Refresh known IDs every 100 iterations.
-            iteration_count = 0  # Total iterations (attempted IDs)
-            processed_count = 0  # IDs for which fetch_movie was called
-
-            # Initialize pointer and known_ids.
+            iteration_count = 0  # total iterations (attempted IDs)
+            processed_count = 0  # IDs for which fetch_movie was actually called
+            self.items_scraped = 100
             current_id = self.start_id
             if self.scrape_type == "missing":
                 known_ids = self.get_existing_movie_ids().union(self.get_invalid_ids())
@@ -113,24 +127,32 @@ class Scraper:
             while current_id <= self.end_id:
                 iteration_count += 1
 
-                # Periodically refresh known IDs.
+                # Periodically refresh known IDs
                 if iteration_count % refresh_interval == 0:
                     if self.scrape_type == "missing":
                         known_ids = self.get_existing_movie_ids().union(self.get_invalid_ids())
                     elif self.scrape_type == "fresh":
                         known_ids = self.get_invalid_ids()
 
-                # Skip IDs already known.
+                    # Also update the scraper record every refresh interval
+                    self.record.update({
+                        "total_requests": self.total_requests,
+                        "total_request_time": self.total_request_time,
+                        "items_scraped": self.items_scraped,
+                        "consecutive_invalid": self.consecutive_invalid
+                    })
+
+                # Skip if known
                 if current_id in known_ids:
                     current_id += 1
                     continue
 
-                # Check for cancellation via record.
+                # Check if externally cancelled
                 if self.check_cancelled():
                     logger.info("Scraping cancelled via scraper record.")
                     break
 
-                # Process this movie ID.
+                # Fetch
                 self.fetch_movie(current_id)
                 processed_count += 1
                 current_id += 1
@@ -146,18 +168,10 @@ class Scraper:
                     self.remove_consecutive_invalids()
                     break
 
-                # Optionally update the record periodically.
-                self.record.update({
-                    "total_requests": self.total_requests,
-                    "total_request_time": self.total_request_time,
-                    "items_scraped": self.items_scraped,
-                    "consecutive_invalid": self.consecutive_invalid
-                })
-
             elapsed_time = time.time() - start_time
             rps = self.total_requests / elapsed_time if elapsed_time > 0 else 0
             avg_req_time = self.total_request_time / \
-                self.total_requests if self.total_requests > 0 else 0
+                self.total_requests if self.total_requests else 0
 
             logger.info(f"Movies scraped this session: {self.items_scraped}")
             logger.info(
@@ -167,7 +181,8 @@ class Scraper:
                 f"Total requests: {self.total_requests}, Elapsed time: {elapsed_time:.2f} seconds, "
                 f"Requests per second: {rps:.2f}, Average request time: {avg_req_time:.2f} seconds."
             )
-            # Final record update.
+
+            # Final record update at the end
             self.record.update({
                 "total_requests": self.total_requests,
                 "total_request_time": self.total_request_time,
@@ -193,7 +208,9 @@ class Scraper:
                     try:
                         Movie.upsert("id", data)
                         self.items_scraped += 1
-                        # Reset consecutive invalid counters.
+                        self.record.update(
+                            {"items_scraped": self.items_scraped}
+                        )
                         self.consecutive_invalid = 0
                         self.consecutive_invalid_ids.clear()
                         logger.info(
@@ -233,18 +250,3 @@ class Scraper:
                 self.consecutive_invalid = 0
                 self.consecutive_invalid_ids.clear()
                 break
-
-
-class ScraperRecord(BaseModel):
-    __tablename__ = "scraper"
-
-    start_id = db.Column(db.BigInteger, nullable=True)
-    end_id = db.Column(db.BigInteger, nullable=True)
-    max_requests_per_second = db.Column(db.Integer, nullable=True)
-    scrape_type = db.Column(db.String(50), nullable=True)
-    consecutive_invalid_threshold = db.Column(db.Integer, nullable=True)
-    total_requests = db.Column(db.Integer, default=0)
-    total_request_time = db.Column(db.Float, default=0.0)
-    items_scraped = db.Column(db.Integer, default=0)
-    consecutive_invalid = db.Column(db.Integer, default=0)
-    cancelled = db.Column(db.Boolean, default=False)

@@ -1,7 +1,5 @@
-# apps/routes/scraper.py
 from flask import Blueprint, request, jsonify
-from app.scraper import Scraper
-from app.scraper import ScraperRecord
+from app.scraper import Scraper, ScraperRecord
 import threading
 
 # Global variable to store the current scraper instance.
@@ -43,6 +41,7 @@ def trigger_scrape_alias():
         scraper_instance = start_scraper("fresh")
         return jsonify({
             "message": "Scraping started (fresh scan).",
+            # Return ._id since there's no 'id' column
             "scraper_record_id": scraper_instance.record._id
         }), 200
     except Exception as e:
@@ -75,15 +74,18 @@ def trigger_missing_scraper():
 
 @scraper.route("/cancel", methods=["POST"])
 def cancel_scraper():
+    # Example usage: /scraper/cancel?key=_id&value=123
     key = request.args.get("key")
     value = request.args.get("value")
     if not key or not value:
         return jsonify({"error": "Both 'key' and 'value' query parameters are required."}), 400
 
-    # Get the first scraper record that matches the key/value.
+    # The user must specify "key=_id" if they want to match the PK.
     record = ScraperRecord.get(key, value)
     if record:
         record.update({"cancelled": True})
-        return jsonify({"message": f"Scraper record {record.id} cancellation triggered."}), 200
+        return jsonify({
+            "message": f"Scraper record {record._id} cancellation triggered."
+        }), 200
     else:
         return jsonify({"error": "No scraper record found matching the criteria."}), 404

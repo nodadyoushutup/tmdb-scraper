@@ -1,5 +1,6 @@
 from datetime import datetime
 from app import db
+from app.logger import logger
 
 
 class BaseModel(db.Model):
@@ -57,6 +58,7 @@ class BaseModel(db.Model):
             return cls.create(data)
 
     def update(self, data):
+        logger.info(f"Update called on {self} with data={data}")
         filtered_data = self._filter_valid_data(data)
         for key, value in filtered_data.items():
             setattr(self, key, value)
