@@ -1,0 +1,8 @@
+requests
+aiohttp
+autopep8
+python-dotenv
+Flask
+Flask-SQLAlchemy
+alembic
+psycopg2-binary
