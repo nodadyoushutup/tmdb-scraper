@@ -5,6 +5,7 @@ from app import db
 class BaseModel(db.Model):
     __abstract__ = True
 
+    # _id is the primary key. We'll keep it as _id everywhere.
     _id = db.Column(db.Integer, primary_key=True)
     _created_at = db.Column(db.DateTime, default=datetime.utcnow)
     _updated_at = db.Column(
@@ -18,7 +19,6 @@ class BaseModel(db.Model):
     def _filter_valid_data(cls, data):
         allowed_keys = {col.name for col in cls.__table__.columns}
         filtered_data = {}
-
         for key, value in data.items():
             if key in allowed_keys:
                 filtered_data[key] = cls._handle_invalid_type(key, value)
